@@ -23,7 +23,14 @@ object Prefs {
     fun autostart(c: Context) = sp(c).getBoolean("auto", false)
     fun postaviAutostart(c: Context, v: Boolean) = sp(c).edit().putBoolean("auto", v).apply()
 
-    fun log(c: Context) = sp(c).getString("log", "") ?: ""
+    fun dugme(c: Context) = sp(c).getInt("dugme", -1)
+    fun postaviDugme(c: Context, kod: Int) = sp(c).edit().putInt("dugme", kod).apply()
+    fun ucenje(c: Context) = sp(c).getBoolean("ucenje", false)
+    fun postaviUcenje(c: Context, v: Boolean) = sp(c).edit().putBoolean("ucenje", v).apply()
+    fun poslednjeDugme(c: Context) = sp(c).getString("poslednjeDugme", "") ?: ""
+    fun sacuvajPoslednjeDugme(c: Context, s: String) = sp(c).edit().putString("poslednjeDugme", s).apply()
+
+    fun log(c: Context) =sp(c).getString("log", "") ?: ""
     fun sacuvajLog(c: Context, red: String) {
         val vreme = SimpleDateFormat("HH:mm", Locale.US).format(Date())
         val linije = (listOf("$vreme  $red") + log(c).lines().filter { it.isNotBlank() }).take(8)

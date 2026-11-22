@@ -22,6 +22,7 @@ class MainActivity : Activity() {
 
     private lateinit var status: TextView
     private lateinit var log: TextView
+    private lateinit var dugmeStatus: TextView
     private lateinit var kuca: EditText
     private lateinit var posao: EditText
 
@@ -90,6 +91,25 @@ class MainActivity : Activity() {
             startForegroundService(Intent(this, AsistentService::class.java).setAction(AsistentService.ACTION_SLUSAJ))
         })
 
+        kol.addView(naslov("Dugme na volanu"))
+        dugmeStatus = tekst("")
+        kol.addView(dugmeStatus)
+        kol.addView(dugme("A. Uključi \"RAV Asistent – dugme na volanu\" u Pristupačnosti") {
+            try {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            } catch (e: Exception) {
+                Toast.makeText(this, "Otvori Podešavanja → Pristupačnost ručno", Toast.LENGTH_LONG).show()
+            }
+        })
+        kol.addView(dugme("B. Nauči dugme (klikni ovde, pa pritisni dugme na volanu)") {
+            Prefs.postaviUcenje(this, true)
+            Toast.makeText(this, "Sad pritisni dugme na volanu…", Toast.LENGTH_LONG).show()
+        })
+        kol.addView(dugme("Zaboravi naučeno dugme") {
+            Prefs.postaviDugme(this, -1)
+            osvezi()
+        })
+
         kol.addView(naslov("Komande"))
         kol.addView(tekst(
             "• Vodi me kući / Idemo na posao\n" +
@@ -127,7 +147,15 @@ class MainActivity : Activity() {
         status.text = "${oznaka(mik)} Mikrofon\n" +
                 "${oznaka(overlay)} Prikaz preko drugih aplikacija\n" +
                 "${oznaka(govor)} Prepoznavanje govora (Google)\n" +
-                "Android ${Build.VERSION.RELEASE} · verzija 1.1"
+                "Android ${Build.VERSION.RELEASE} · verzija 1.2"
+        val pristupacnost = (Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: "")
+            .contains(packageName)
+        val kod = Prefs.dugme(this)
+        val naucen = if (kod > 0) android.view.KeyEvent.keyCodeToString(kod) else "nije naučeno (koristi glasovno dugme)"
+        val poslednje = Prefs.poslednjeDugme(this).ifBlank { "još ništa" }
+        dugmeStatus.text = "${oznaka(pristupacnost)} Pristupačnost uključena\n" +
+                "Dugme za slušanje: $naucen\n" +
+                "Poslednje pritisnuto dugme: $poslednje"
         val l = Prefs.log(this)
         log.text = if (l.isBlank()) "Još ništa." else l
     }
