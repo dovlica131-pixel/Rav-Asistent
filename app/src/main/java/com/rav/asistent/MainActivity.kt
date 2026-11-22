@@ -127,7 +127,7 @@ class MainActivity : Activity() {
         status.text = "${oznaka(mik)} Mikrofon\n" +
                 "${oznaka(overlay)} Prikaz preko drugih aplikacija\n" +
                 "${oznaka(govor)} Prepoznavanje govora (Google)\n" +
-                "Android ${Build.VERSION.RELEASE}"
+                "Android ${Build.VERSION.RELEASE} · verzija 1.1"
         val l = Prefs.log(this)
         log.text = if (l.isBlank()) "Još ništa." else l
     }

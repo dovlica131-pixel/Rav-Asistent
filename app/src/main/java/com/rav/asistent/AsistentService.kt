@@ -1,27 +1,18 @@
 package com.rav.asistent
 
-import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.Icon
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
-import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.view.Gravity
 import android.view.MotionEvent
@@ -33,38 +24,35 @@ import java.util.Locale
 import kotlin.math.abs
 
 /**
- * Radi u pozadini: drži plutajuće dugme sa mikrofonom, sluša komandu i izvršava je.
+ * Radi u pozadini: drži plutajuće dugme sa mikrofonom.
+ * Dodir otvara Google slušanje (ListenActivity), a rezultat stiže nazad ovde i izvršava se.
  */
 class AsistentService : Service(), TextToSpeech.OnInitListener {
 
     companion object {
         const val ACTION_SLUSAJ = "com.rav.asistent.SLUSAJ"
+        const val ACTION_REZULTAT = "com.rav.asistent.REZULTAT"
         const val ACTION_STOP = "com.rav.asistent.STOP"
+        const val EXTRA_TEKST = "tekst"
         private const val KANAL = "asistent"
         private const val NOTIF_ID = 1
         private val PLAVA = 0xFF1E88E5.toInt()
-        private val CRVENA = 0xFFE53935.toInt()
     }
 
     private lateinit var wm: WindowManager
-    private lateinit var audio: AudioManager
     private lateinit var izvrsilac: Izvrsilac
     private val handler = Handler(Looper.getMainLooper())
 
     private var balon: ImageView? = null
     private var balonParams: WindowManager.LayoutParams? = null
-    private var prepoznavac: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var ttsSpreman = false
-    private var fokus: AudioFocusRequest? = null
-    private var slusa = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        audio = getSystemService(AUDIO_SERVICE) as AudioManager
         izvrsilac = Izvrsilac(this) { govori(it) }
         napraviKanal()
         startForeground(NOTIF_ID, napraviNotifikaciju())
@@ -79,20 +67,37 @@ class AsistentService : Service(), TextToSpeech.OnInitListener {
                 stopSelf()
                 return START_NOT_STICKY
             }
-            ACTION_SLUSAJ -> pocniSlusanje()
+            ACTION_SLUSAJ -> otvoriSlusanje()
+            ACTION_REZULTAT -> obradi(intent.getStringArrayListExtra(EXTRA_TEKST) ?: arrayListOf())
         }
         if (balon == null) prikaziBalon()
         return START_STICKY
     }
 
     override fun onDestroy() {
-        prepoznavac?.destroy()
-        prepoznavac = null
         tts?.shutdown()
         balon?.let { try { wm.removeView(it) } catch (ignored: Exception) { } }
         balon = null
-        vratiFokus()
         super.onDestroy()
+    }
+
+    // ---------- Slušanje i izvršavanje ----------
+
+    private fun otvoriSlusanje() {
+        tts?.stop()
+        try {
+            startActivity(Intent(this, ListenActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: Exception) {
+            Prefs.sacuvajLog(this, "Ne mogu da pokrenem slušanje: ${e.message}")
+            govori("Ne mogu da pokrenem slušanje.")
+        }
+    }
+
+    private fun obradi(kandidati: List<String>) {
+        val (tekst, akcija) = Komande.izaberi(kandidati)
+        Prefs.sacuvajLog(this, "\"$tekst\" → ${akcija.opis()}")
+        // mala pauza da se Google prozor zatvori i muzika vrati
+        handler.postDelayed({ izvrsilac.izvrsi(akcija) }, 400)
     }
 
     // ---------- Govor (odgovori asistenta) ----------
@@ -114,113 +119,7 @@ class AsistentService : Service(), TextToSpeech.OnInitListener {
         if (ttsSpreman) tts?.speak(tekst, TextToSpeech.QUEUE_FLUSH, null, "asistent")
     }
 
-    // ---------- Slušanje ----------
-
-    private fun pocniSlusanje() {
-        if (slusa) return
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            govori("Treba mi dozvola za mikrofon. Otvori aplikaciju RAV Asistent.")
-            return
-        }
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            govori("Na uređaju nema prepoznavanja govora. Instaliraj Google aplikaciju.")
-            return
-        }
-        tts?.stop()
-        uzmiFokus()
-        prepoznavac?.destroy()
-        val r = SpeechRecognizer.createSpeechRecognizer(this)
-        r.setRecognitionListener(slusalac)
-        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "sr-RS")
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "sr-RS")
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
-        }
-        prepoznavac = r
-        slusa = true
-        oboji(true)
-        r.startListening(i)
-    }
-
-    private fun prekiniSlusanje() {
-        slusa = false
-        prepoznavac?.cancel()
-        oboji(false)
-        vratiFokus()
-    }
-
-    private fun zavrsiSlusanje() {
-        slusa = false
-        oboji(false)
-        vratiFokus()
-    }
-
-    private val slusalac = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) {}
-        override fun onBeginningOfSpeech() {}
-        override fun onRmsChanged(rmsdB: Float) {}
-        override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() {}
-        override fun onPartialResults(partialResults: Bundle?) {}
-        override fun onEvent(eventType: Int, params: Bundle?) {}
-
-        override fun onError(error: Int) {
-            if (!slusa) return
-            zavrsiSlusanje()
-            val poruka = when (error) {
-                SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Nisam razumeo, probaj ponovo."
-                SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Nema interneta za prepoznavanje govora."
-                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Nema dozvole za mikrofon."
-                SpeechRecognizer.ERROR_AUDIO -> "Problem sa mikrofonom."
-                12, 13 -> "Srpski jezik nije podržan na ovom uređaju."
-                else -> "Greška pri slušanju, broj $error."
-            }
-            Prefs.sacuvajLog(this@AsistentService, "Greška $error")
-            govori(poruka)
-        }
-
-        override fun onResults(results: Bundle?) {
-            if (!slusa) return
-            zavrsiSlusanje()
-            val kandidati = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: arrayListOf<String>()
-            val (tekst, akcija) = Komande.izaberi(kandidati)
-            Prefs.sacuvajLog(this@AsistentService, "\"$tekst\" → ${akcija.opis()}")
-            // mala pauza da se muzika vrati na normalnu jačinu pre izvršenja
-            handler.postDelayed({ izvrsilac.izvrsi(akcija) }, 350)
-        }
-    }
-
-    /** Dok slušamo, muzika se utiša da bi mikrofon bolje čuo. */
-    private fun uzmiFokus() {
-        val z = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            .build()
-        audio.requestAudioFocus(z)
-        fokus = z
-    }
-
-    private fun vratiFokus() {
-        fokus?.let { audio.abandonAudioFocusRequest(it) }
-        fokus = null
-    }
-
     // ---------- Plutajuće dugme ----------
-
-    private fun krug(boja: Int) = GradientDrawable().apply {
-        shape = GradientDrawable.OVAL
-        setColor(boja)
-    }
-
-    private fun oboji(aktivno: Boolean) {
-        balon?.background = krug(if (aktivno) CRVENA else PLAVA)
-    }
 
     private fun prikaziBalon() {
         if (balon != null || !Settings.canDrawOverlays(this)) return
@@ -229,7 +128,10 @@ class AsistentService : Service(), TextToSpeech.OnInitListener {
         v.setImageResource(R.drawable.ic_mic)
         val pad = velicina / 5
         v.setPadding(pad, pad, pad, pad)
-        v.background = krug(PLAVA)
+        v.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(PLAVA)
+        }
         v.elevation = 8f
         val p = WindowManager.LayoutParams(
             velicina, velicina,
@@ -281,7 +183,7 @@ class AsistentService : Service(), TextToSpeech.OnInitListener {
                         Prefs.sacuvajBalon(this@AsistentService, p.x, p.y)
                     } else {
                         v.performClick()
-                        if (slusa) prekiniSlusanje() else pocniSlusanje()
+                        otvoriSlusanje()
                     }
                 }
             }
