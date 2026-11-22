@@ -37,7 +37,6 @@
             android:label="Govori"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:noHistory="true"
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
